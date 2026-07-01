@@ -172,37 +172,32 @@ def cargar_hoja_excel(archivo, nombre_hoja):
     return df, xls.sheet_names
 
 
-def agregar_excel_por_dia(df_excel, col_marca_temporal, tz_asumida):
+def agregar_excel_por_dia(df_excel, col_fecha):
     """
-    Agrupa el Excel por día (derivado de la columna Marca temporal).
+    Agrupa el Excel por día usando la columna de fecha indicada (col_fecha).
     - Columnas numéricas -> promedio
     - Columnas no numéricas -> valores únicos concatenados con '; '
     - Se agrega columna 'Registros_Excel' con el conteo de filas por día.
+
+    Nota: si la columna de fecha ya es una fecha "pura" (sin hora, sin zona
+    horaria) -como suele ser el caso de una columna llamada 'Fecha'- se toma
+    tal cual, sin aplicar ningún corrimiento de zona horaria (para no correr
+    el día al convertir). Solo se convierte a hora Colombia si la columna
+    trae explícitamente información de zona horaria.
     """
     df = df_excel.copy()
 
-    # Si el Excel ya trae una columna llamada "Fecha", se renombra para no
-    # chocar con la columna "Fecha" que se genera a partir de Marca temporal.
-    if "Fecha" in df.columns:
-        df = df.rename(columns={"Fecha": "Fecha_original_excel"})
+    fecha_dt = pd.to_datetime(df[col_fecha], errors="coerce")
+    if getattr(fecha_dt.dt, "tz", None) is not None:
+        fecha_dt = fecha_dt.dt.tz_convert(TZ)
 
-    marca = pd.to_datetime(df[col_marca_temporal], errors="coerce")
-
-    if tz_asumida == "UTC (convertir a Colombia)":
-        if marca.dt.tz is None:
-            marca = marca.dt.tz_localize("UTC")
-        marca = marca.dt.tz_convert(TZ)
-    else:
-        if marca.dt.tz is not None:
-            marca = marca.dt.tz_convert(TZ)
-
-    df["_fecha_dia"] = marca.dt.date.astype(str)
+    df["_fecha_dia"] = fecha_dt.dt.date.astype(str)
     df = df.dropna(subset=["_fecha_dia"])
 
     cols_numericas = df.select_dtypes(include="number").columns.tolist()
     cols_texto = [
         c for c in df.columns
-        if c not in cols_numericas and c not in [col_marca_temporal, "_fecha_dia"]
+        if c not in cols_numericas and c not in [col_fecha, "_fecha_dia"]
     ]
 
     agg_dict = {c: "mean" for c in cols_numericas}
@@ -299,7 +294,7 @@ with tab_excel:
     st.subheader("Cruce de datos: Excel (Tabla de datos) + InfluxDB")
     st.caption(
         "Se agrega la información del Excel como columnas extra en la tabla diaria "
-        "de InfluxDB, cruzando por día a partir de la columna 'Marca temporal'."
+        "de InfluxDB, cruzando por día a partir de la columna 'Fecha'."
     )
 
     if st.session_state.df_resultado is None:
@@ -314,10 +309,7 @@ with tab_excel:
     with col1:
         nombre_hoja = st.text_input("Nombre de la hoja", value="Tabla de datos")
     with col2:
-        tz_asumida = st.selectbox(
-            "Zona horaria de 'Marca temporal'",
-            ["Ya está en hora Colombia (UTC-5)", "UTC (convertir a Colombia)"],
-        )
+        columna_fecha = st.text_input("Columna de fecha para cruzar", value="Fecha")
 
     if archivo_excel is not None:
         try:
@@ -331,9 +323,9 @@ with tab_excel:
                 f"No se encontró la hoja '{nombre_hoja}'. "
                 f"Hojas disponibles en el archivo: {hojas_disponibles}"
             )
-        elif "Marca temporal" not in df_excel.columns:
+        elif columna_fecha not in df_excel.columns:
             st.error(
-                "La hoja no tiene una columna llamada 'Marca temporal'. "
+                f"La hoja no tiene una columna llamada '{columna_fecha}'. "
                 f"Columnas encontradas: {df_excel.columns.tolist()}"
             )
         else:
@@ -346,7 +338,7 @@ with tab_excel:
                     st.error("No hay datos de InfluxDB. Ve a la pestaña de Consulta InfluxDB primero.")
                 else:
                     try:
-                        df_excel_agrupado = agregar_excel_por_dia(df_excel, "Marca temporal", tz_asumida)
+                        df_excel_agrupado = agregar_excel_por_dia(df_excel, columna_fecha)
                         df_cruce = st.session_state.df_resultado.merge(
                             df_excel_agrupado, on="Fecha", how="left"
                         )
