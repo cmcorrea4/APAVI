@@ -17,6 +17,7 @@ Dependencias no estándar: streamlit, influxdb-client, pandas (todas van en requ
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import datetime, timedelta, time, date
 from zoneinfo import ZoneInfo
 from influxdb_client import InfluxDBClient
@@ -212,6 +213,58 @@ def agregar_excel_por_dia(df_excel, col_fecha):
     return agrupado
 
 
+def calcular_correlacion(df, columnas, metodo):
+    return df[columnas].corr(method=metodo)
+
+
+def top_pares_correlacionados(corr, top_n=15):
+    """Parejas de variables más correlacionadas (por valor absoluto), sin duplicar ni comparar una variable consigo misma."""
+    cols = corr.columns.tolist()
+    pares = []
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            valor = corr.iloc[i, j]
+            if pd.notna(valor):
+                pares.append((cols[i], cols[j], valor))
+    df_pares = pd.DataFrame(pares, columns=["Variable 1", "Variable 2", "Correlación"])
+    if df_pares.empty:
+        return df_pares
+    df_pares["_abs"] = df_pares["Correlación"].abs()
+    df_pares = df_pares.sort_values("_abs", ascending=False).drop(columns="_abs")
+    return df_pares.head(top_n).reset_index(drop=True)
+
+
+def graficar_heatmap(corr):
+    """Heatmap de correlación usando Altair (dependencia nativa de Streamlit)."""
+    orden = corr.columns.tolist()
+    corr_largo = corr.reset_index().rename(columns={"index": "Variable 1"})
+    corr_largo = corr_largo.melt(id_vars="Variable 1", var_name="Variable 2", value_name="Correlación")
+
+    base = alt.Chart(corr_largo).encode(
+        x=alt.X("Variable 2:O", sort=orden, title=None),
+        y=alt.Y("Variable 1:O", sort=orden, title=None),
+    )
+
+    celdas = base.mark_rect().encode(
+        color=alt.Color(
+            "Correlación:Q",
+            scale=alt.Scale(domain=[-1, 0, 1], range=["#3b4cc0", "#f2f2f2", "#b40426"]),
+            legend=alt.Legend(title="Correlación"),
+        ),
+        tooltip=["Variable 1", "Variable 2", alt.Tooltip("Correlación:Q", format=".2f")],
+    )
+
+    texto = base.mark_text(fontSize=9).encode(
+        text=alt.Text("Correlación:Q", format=".2f"),
+        color=alt.condition(
+            "abs(datum['Correlación']) > 0.5", alt.value("white"), alt.value("black")
+        ),
+    )
+
+    tam = max(320, len(orden) * 55)
+    return (celdas + texto).properties(width=tam, height=tam)
+
+
 # ----------------------------------------------------------------------------
 # App principal
 # ----------------------------------------------------------------------------
@@ -226,7 +279,9 @@ if "df_resultado" not in st.session_state:
 if "df_cruce" not in st.session_state:
     st.session_state.df_cruce = None
 
-tab_influx, tab_excel = st.tabs(["📡 Consulta InfluxDB", "📊 Cruce con Excel"])
+tab_influx, tab_excel, tab_correlacion = st.tabs(
+    ["📡 Consulta InfluxDB", "📊 Cruce con Excel", "📈 Correlaciones"]
+)
 
 # ============================== TAB 1: INFLUXDB ==============================
 with tab_influx:
@@ -333,6 +388,22 @@ with tab_excel:
             with st.expander("Ver muestra del Excel cargado"):
                 st.dataframe(df_excel.head(10), use_container_width=True)
 
+            with st.expander("🔍 Diagnóstico de fechas (revisar si algo no cruza)"):
+                tipo_col = df_excel[columna_fecha].dtype
+                st.write(f"Tipo de dato de la columna '{columna_fecha}': `{tipo_col}`")
+                fecha_parseada = pd.to_datetime(df_excel[columna_fecha], errors="coerce")
+                n_invalidas = fecha_parseada.isna().sum()
+                if n_invalidas > 0:
+                    st.warning(f"{n_invalidas} valor(es) de '{columna_fecha}' no se pudieron interpretar como fecha.")
+                muestra_diag = pd.DataFrame({
+                    "Valor original": df_excel[columna_fecha],
+                    "Fecha interpretada": fecha_parseada.dt.date.astype(str),
+                })
+                st.dataframe(muestra_diag.head(15), use_container_width=True)
+                if st.session_state.df_resultado is not None:
+                    st.write("Rango de fechas en InfluxDB (tabla actual):")
+                    st.write(st.session_state.df_resultado["Fecha"].tolist())
+
             if st.button("Cruzar con InfluxDB", type="primary"):
                 if st.session_state.df_resultado is None:
                     st.error("No hay datos de InfluxDB. Ve a la pestaña de Consulta InfluxDB primero.")
@@ -364,3 +435,64 @@ with tab_excel:
             file_name="cruce_influx_excel.csv",
             mime="text/csv",
         )
+
+# ============================== TAB 3: CORRELACIONES ==============================
+with tab_correlacion:
+    st.subheader("Correlación entre variables")
+    st.caption(
+        "Se calcula sobre la tabla resultante del cruce (InfluxDB + Excel). "
+        "Ve primero a la pestaña '📊 Cruce con Excel' y genera el cruce."
+    )
+
+    df_base = st.session_state.df_cruce
+
+    if df_base is None:
+        st.warning("Todavía no hay una tabla de cruce. Genera el cruce en la pestaña anterior primero.")
+    else:
+        columnas_numericas = df_base.select_dtypes(include="number").columns.tolist()
+
+        if len(columnas_numericas) < 2:
+            st.warning("La tabla de cruce no tiene al menos 2 columnas numéricas para correlacionar.")
+        else:
+            default_sel = columnas_numericas[:10] if len(columnas_numericas) > 10 else columnas_numericas
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                cols_seleccionadas = st.multiselect(
+                    "Variables a incluir en la correlación",
+                    options=columnas_numericas,
+                    default=default_sel,
+                )
+            with col_b:
+                metodo = st.selectbox("Método", ["pearson", "spearman", "kendall"])
+
+            if len(cols_seleccionadas) < 2:
+                st.info("Selecciona al menos 2 variables numéricas.")
+            else:
+                corr = calcular_correlacion(df_base, cols_seleccionadas, metodo)
+
+                st.markdown("##### Mapa de calor de correlación")
+                st.altair_chart(graficar_heatmap(corr), use_container_width=False)
+
+                st.markdown("##### Parejas de variables más correlacionadas")
+                df_top = top_pares_correlacionados(corr, top_n=15)
+                st.dataframe(df_top, use_container_width=True)
+
+                st.markdown("##### Dispersión entre dos variables")
+                disp_x, disp_y = st.columns(2)
+                with disp_x:
+                    var_x = st.selectbox("Eje X", cols_seleccionadas, index=0)
+                with disp_y:
+                    idx_y = 1 if len(cols_seleccionadas) > 1 else 0
+                    var_y = st.selectbox("Eje Y", cols_seleccionadas, index=idx_y)
+
+                st.scatter_chart(df_base, x=var_x, y=var_y, use_container_width=True)
+                valor_corr = corr.loc[var_x, var_y]
+                st.caption(f"Correlación ({metodo}) entre **{var_x}** y **{var_y}**: `{valor_corr:.3f}`")
+
+                csv_corr = corr.to_csv().encode("utf-8")
+                st.download_button(
+                    "Descargar matriz de correlación (CSV)",
+                    data=csv_corr,
+                    file_name="matriz_correlacion.csv",
+                    mime="text/csv",
+                )
