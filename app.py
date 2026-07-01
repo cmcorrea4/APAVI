@@ -60,7 +60,7 @@ org = st.sidebar.text_input("Org", value=DEFAULT_ORG)
 bucket = st.sidebar.text_input("Bucket", value=DEFAULT_BUCKET)
 measurement = st.sidebar.text_input(
     "Measurement",
-    value="sensorData",
+    value="GALLINERO",
     help="Nombre del measurement usado por el ESP32 al escribir los puntos.",
 )
 
