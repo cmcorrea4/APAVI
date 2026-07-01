@@ -25,7 +25,7 @@ from influxdb_client import InfluxDBClient
 # ----------------------------------------------------------------------------
 # Configuración general
 # ----------------------------------------------------------------------------
-st.set_page_config(page_title="Consulta InfluxDB - Gallinas", layout="wide")
+st.set_page_config(page_title="Consulta InfluxDB --", layout="wide")
 
 TZ = ZoneInfo("America/Bogota")  # UTC-5, sin horario de verano
 
