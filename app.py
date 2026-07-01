@@ -268,7 +268,7 @@ def graficar_heatmap(corr):
 # ----------------------------------------------------------------------------
 # App principal
 # ----------------------------------------------------------------------------
-st.title("Promedios diarios por franja horaria - Bucket GALLINAS")
+st.title("Análisis de variables ambientales y productivas --")
 st.caption(
     "Franjas: Madrugada 00:00-06:00 · Mañana 06:00-12:00 · Tarde 12:00-18:00 · Noche 18:00-24:00 "
     "(hora Colombia, UTC-5)"
