@@ -1,4 +1,4 @@
-# 🐔 Promedios diarios GALLINAS - InfluxDB + Excel + Correlaciones
+# 🐔 Análisis de variables ambientales y productivas - InfluxDB + Excel + Correlaciones
 
 App en Streamlit para consultar datos de sensores del bucket `GALLINAS` en InfluxDB Cloud, cruzarlos con un archivo Excel de producción avícola, y analizar correlaciones entre variables.
 
